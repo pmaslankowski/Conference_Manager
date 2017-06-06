@@ -33,6 +33,7 @@ CREATE DOMAIN UserType AS text
 -- create tables:
 CREATE TABLE event(
 	id SERIAL PRIMARY KEY,
+	name VARCHAR(255),
 	start_date date NOT NULL,
 	finish_date date NOT NULL,
   CONSTRAINT valid_dates CHECK (start_date <= finish_date));
@@ -137,6 +138,7 @@ $X$ LANGUAGE plpgsql;
 CREATE TRIGGER on_insert_to_talk BEFORE INSERT ON talk
 FOR EACH ROW EXECUTE PROCEDURE talk_timestamp_trigger();
 
+
 CREATE OR REPLACE FUNCTION invitation_friend_of_trigger()
 RETURNS TRIGGER AS $X$
 DECLARE
@@ -178,3 +180,42 @@ $X$ LANGUAGE plpgsql;
 CREATE TRIGGER on_insert_to_invitation_friend_of
 AFTER INSERT ON invitation_friend_of
 FOR EACH ROW EXECUTE PROCEDURE invitation_friend_of_trigger();
+
+
+CREATE OR REPLACE FUNCTION talk_trigger()
+RETURNS TRIGGER AS $X$
+DECLARE
+	event_start_date date;
+	event_finish_date date;
+BEGIN
+	SELECT start_date INTO event_start_date FROM event
+	WHERE id = NEW.eventid;
+	SELECT finish_date INTO event_finish_date FROM event
+	WHERE id = NEW.eventid;
+	IF NEW.start_timestamp::DATE BETWEEN event_start_date AND event_finish_date THEN
+	 	RETURN NEW;
+	ELSE
+		RAISE EXCEPTION 'Wrong start_timestamp for talk: %', NEW.title;
+	END IF;
+END;
+$X$ LANGUAGE plpgsql;
+
+CREATE TRIGGER on_insert_to_talk_check_timestamp
+BEFORE INSERT ON talk
+FOR EACH ROW EXECUTE PROCEDURE talk_trigger();
+
+
+CREATE OR REPLACE FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
+RETURNS TEXT AS $X$
+DECLARE
+	real_pass VARCHAR(50);
+BEGIN
+	SELECT password INTO real_pass FROM conf_user
+	WHERE login=username;
+	IF real_pass = pass THEN
+		RETURN (SELECT usertype FROM conf_user WHERE login=username);
+	ELSE
+		RETURN 'WRONG DATA';
+	END IF;
+END;
+$X$ LANGUAGE plpgsql;
