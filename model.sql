@@ -5,6 +5,10 @@
 
 
 --delete old database
+DROP DATABASE IF EXISTS conference_database;
+DROP OWNED BY app_api;
+DROP ROLE IF EXISTS app_api;
+
 DROP TABLE IF EXISTS user_registered_at_event CASCADE;
 DROP TABLE IF EXISTS user_talk_rating CASCADE;
 DROP TABLE IF EXISTS user_present_at_talk CASCADE;
@@ -13,12 +17,15 @@ DROP TABLE IF EXISTS friend_of CASCADE;
 DROP TABLE IF EXISTS conf_user CASCADE;
 DROP TABLE IF EXISTS talk CASCADE;
 DROP TABLE IF EXISTS event CASCADE;
-
 DROP DOMAIN IF EXISTS TalkStatus;
 DROP DOMAIN IF EXISTS TalkRating;
 DROP DOMAIN IF EXISTS UserType;
 
 
+CREATE DATABASE conference_database;
+\connect conference_database;
+
+CREATE ROLE app_api WITH LOGIN PASSWORD '123456';
 -- create  domains:
 CREATE DOMAIN TalkStatus AS text
 	CHECK(VALUE IN ('accepted', 'rejected', 'awaiting')) NOT NULL;
@@ -50,7 +57,7 @@ CREATE TABLE talk(
 
 CREATE TABLE conf_user(
 	id SERIAL PRIMARY KEY,
-	login varchar(50) NOT NULL,
+	login varchar(50) NOT NULL UNIQUE,
 	password varchar(50) NOT NULL,
 	usertype UserType DEFAULT 'participant');
 
@@ -205,6 +212,7 @@ BEFORE INSERT ON talk
 FOR EACH ROW EXECUTE PROCEDURE talk_trigger();
 
 
+BEGIN;
 CREATE OR REPLACE FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
 RETURNS TEXT AS $X$
 DECLARE
@@ -218,4 +226,18 @@ BEGIN
 		RETURN 'WRONG DATA';
 	END IF;
 END;
-$X$ LANGUAGE plpgsql;
+$X$ LANGUAGE plpgsql
+SECURITY DEFINER;
+
+REVOKE ALL ON FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
+	FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
+	TO app_api;
+GRANT SELECT, INSERT, UPDATE, REFERENCES
+	ON TABLE event, talk, user_registered_at_event, user_talk_rating,
+	         user_present_at_talk, invitation_friend_of
+	TO app_api;
+GRANT SELECT, REFERENCES ON TABLE friend_of TO app_api;
+GRANT USAGE, SELECT ON SEQUENCE conf_user_id_seq, event_id_seq, talk_id_seq TO app_api;
+
+COMMIT;
