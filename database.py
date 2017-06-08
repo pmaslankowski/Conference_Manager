@@ -56,7 +56,7 @@ class Database(object):
         sql_query = "SELECT check_user('{}','{}')".format(login, password)
         self._cursor.execute(sql_query)
         real_auth_level, = self._cursor.fetchone()
-        return real_auth_level == expected_level
+        return real_auth_level == expected_level or (real_auth_level == 'organiser' and expected_level == 'participant')
 
 
     def execute(self, query):
