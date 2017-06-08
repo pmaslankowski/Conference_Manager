@@ -39,16 +39,15 @@ CREATE DOMAIN UserType AS text
 
 -- create tables:
 CREATE TABLE event(
-	id SERIAL PRIMARY KEY,
-	name VARCHAR(255),
+	id VARCHAR(255) PRIMARY KEY,
 	start_date date NOT NULL,
 	finish_date date NOT NULL,
   CONSTRAINT valid_dates CHECK (start_date <= finish_date));
 
 CREATE TABLE talk(
-	id SERIAL PRIMARY KEY,
-	userid integer NOT NULL,
-	eventid integer NOT NULL,
+	id text PRIMARY KEY,
+	userid varchar(50) NOT NULL,
+	eventid varchar(255) NOT NULL,
 	status TalkStatus DEFAULT 'awaiting',
 	title text NOT NULL,
 	room integer CHECK(room >= 0),
@@ -56,35 +55,34 @@ CREATE TABLE talk(
 	registration_timestamp timestamp DEFAULT CURRENT_TIMESTAMP);
 
 CREATE TABLE conf_user(
-	id SERIAL PRIMARY KEY,
-	login varchar(50) NOT NULL UNIQUE,
+	id varchar(50) PRIMARY KEY,
 	password varchar(50) NOT NULL,
 	usertype UserType DEFAULT 'participant');
 
 CREATE TABLE user_registered_at_event(
-	userid integer NOT NULL,
-	eventid integer NOT NULL,
+	userid varchar(50) NOT NULL,
+	eventid varchar(255) NOT NULL,
   PRIMARY KEY(userid, eventid));
 
 CREATE TABLE user_talk_rating(
-	userid integer NOT NULL,
-	talkid integer NOT NULL,
+	userid varchar(50) NOT NULL,
+	talkid text NOT NULL,
 	rating TalkRating DEFAULT 0,
   PRIMARY KEY(userid, talkid));
 
 CREATE TABLE user_present_at_talk(
-	userid integer NOT NULL,
-	talkid integer NOT NULL,
+	userid varchar(50) NOT NULL,
+	talkid text NOT NULL,
   PRIMARY KEY(userid, talkid));
 
 CREATE TABLE invitation_friend_of(
-	userid1 integer NOT NULL,
-	userid2 integer NOT NULL,
+	userid1 varchar(50) NOT NULL,
+	userid2 varchar(50) NOT NULL,
   PRIMARY KEY(userid1, userid2));
 
 CREATE TABLE friend_of(
-	userid1 integer NOT NULL,
-	userid2 integer NOT NULL,
+	userid1 varchar(50) NOT NULL,
+	userid2 varchar(50) NOT NULL,
 	PRIMARY KEY(userid1, userid2),
   CONSTRAINT id_order CHECK(userid1 < userid2));
 
@@ -149,8 +147,8 @@ FOR EACH ROW EXECUTE PROCEDURE talk_timestamp_trigger();
 CREATE OR REPLACE FUNCTION invitation_friend_of_trigger()
 RETURNS TRIGGER AS $X$
 DECLARE
-  lower_id int;
-	higher_id int;
+  lower_id varchar(50);
+	higher_id varchar(50);
 BEGIN
 	IF NEW.userid1 < NEW.userid2 THEN
 		lower_id := NEW.userid1;
@@ -202,7 +200,7 @@ BEGIN
 	IF NEW.start_timestamp::DATE BETWEEN event_start_date AND event_finish_date THEN
 	 	RETURN NEW;
 	ELSE
-		RAISE EXCEPTION 'Wrong start_timestamp for talk: %', NEW.title;
+		RAISE EXCEPTION 'Wrong start_timestamp for talk: %', NEW.id;
 	END IF;
 END;
 $X$ LANGUAGE plpgsql;
@@ -212,16 +210,24 @@ BEFORE INSERT ON talk
 FOR EACH ROW EXECUTE PROCEDURE talk_trigger();
 
 
-BEGIN;
+CREATE OR REPLACE FUNCTION create_user(username VARCHAR(50), pass VARCHAR(50))
+RETURNS void AS $X$
+BEGIN
+	INSERT INTO conf_user(id, password) VALUES(username, pass);
+END;
+$X$ LANGUAGE plpgsql
+SECURITY DEFINER;
+
+
 CREATE OR REPLACE FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
 RETURNS TEXT AS $X$
 DECLARE
 	real_pass VARCHAR(50);
 BEGIN
 	SELECT password INTO real_pass FROM conf_user
-	WHERE login=username;
+	WHERE id=username;
 	IF real_pass = pass THEN
-		RETURN (SELECT usertype FROM conf_user WHERE login=username);
+		RETURN (SELECT usertype FROM conf_user WHERE id=username);
 	ELSE
 		RETURN 'WRONG DATA';
 	END IF;
@@ -229,15 +235,15 @@ END;
 $X$ LANGUAGE plpgsql
 SECURITY DEFINER;
 
+
 REVOKE ALL ON FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
 	FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
 	TO app_api;
+GRANT EXECUTE ON FUNCTION create_user(username VARCHAR(50), pass VARCHAR(50))
+	TO app_api;
 GRANT SELECT, INSERT, UPDATE, REFERENCES
 	ON TABLE event, talk, user_registered_at_event, user_talk_rating,
-	         user_present_at_talk, invitation_friend_of
+	         user_present_at_talk, invitation_friend_of, friend_of
 	TO app_api;
-GRANT SELECT, REFERENCES ON TABLE friend_of TO app_api;
-GRANT USAGE, SELECT ON SEQUENCE conf_user_id_seq, event_id_seq, talk_id_seq TO app_api;
-
-COMMIT;
+GRANT DELETE ON TABLE invitation_friend_of TO app_api;
