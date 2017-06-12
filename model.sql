@@ -142,6 +142,8 @@ $X$ LANGUAGE plpgsql;
 
 CREATE TRIGGER on_insert_to_talk BEFORE INSERT ON talk
 FOR EACH ROW EXECUTE PROCEDURE talk_timestamp_trigger();
+CREATE TRIGGER on_update_to_talk BEFORE UPDATE ON talk
+FOR EACH ROW EXECUTE PROCEDURE talk_timestamp_trigger();
 
 
 CREATE OR REPLACE FUNCTION invitation_friend_of_trigger()
