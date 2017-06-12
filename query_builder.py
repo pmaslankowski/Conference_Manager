@@ -22,6 +22,7 @@ class QueryBuilder:
 
 
     # query builders:
+    # queries modifying database
     def event(self, name, args):
         """
         (*O) event <login> <password> <eventname> <start_timestamp> <end_timestamp>
@@ -134,6 +135,203 @@ class QueryBuilder:
         placeholders = [args['login1'], args['login2']]
         auth_data = (args['login1'], args['password'], 'participant')
         return name, columns, query, placeholders, True, auth_data
+
+
+    # queries not modifying database:
+    def user_plan(self, name, args):
+        """
+        (*N) user_plan <login> <limit>
+        Return attributes: <login> <talk> <start_timestamp> <title> <room>
+        """
+        columns = ['login', 'talk', 'start_timestamp', 'title', 'room']
+        query = 'SELECT ue.userid, talk.id, start_timestamp, title, room ' + \
+                'FROM user_registered_at_event ue ' + \
+                'JOIN talk ON (ue.eventid = talk.eventid) ' + \
+                "WHERE ue.userid = %s AND status = 'accepted' " + \
+                'AND start_timestamp >= CURRENT_TIMESTAMP ' + \
+                'ORDER BY start_timestamp ' + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
+        placeholders = [args['login'], args['limit']] if args['limit'] > 0 else [args['login']]
+        auth_data = None
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def day_plan(self, name, args):
+        """
+        (*N) day_plan <timestamp>
+        Returned attributes: <talk> <start_timestamp> <title> <room>
+        """
+        columns = ['talk', 'start_timestamp', 'title', 'room']
+        query = 'SELECT id, start_timestamp, title, room FROM talk ' + \
+                'WHERE start_timestamp::date = %s::date ' + \
+                "AND status = 'accepted' " + \
+                'ORDER BY room, start_timestamp'
+        placeholders = [args['timestamp']]
+        auth_data = None
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def best_talks(self, name, args):
+        """
+        (*N) best_talks <start_timestamp> <end_timestamp> <limit> <all>
+        Returned attributes: <talk> <start_timestamp> <title> <room>
+        """
+        columns = ['talk', 'start_timestamp', 'title', 'room']
+        query = 'SELECT talkid, start_timestamp, title, room, avg(rating) AS avgrate ' + \
+                'FROM user_talk_rating ut ' + \
+                'JOIN talk ON (ut.talkid = talk.id) ' + \
+                "WHERE start_timestamp BETWEEN %s AND %s AND status = 'accepted' " + \
+                ('AND ut.userid IN ' + \
+                 '(SELECT userid ' + \
+                 'FROM user_present_at_talk ' + \
+                 'WHERE talkid=talk.id)' if args['all'] == 0 else '') + \
+                'GROUP BY talkid, start_timestamp, title, room ' + \
+                'ORDER BY avgrate DESC ' + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
+        print(query)
+        placeholders = [args['start_timestamp'], args['end_timestamp']]
+        placeholders += [args['limit']] if args['limit'] > 0 else []
+        auth_data = None
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def most_popular_talks(self, name, args):
+        """
+        (*N) most_popular_talks <start_timestamp> <end_timestamp> <limit>
+        Returned attributes: <talk> <start_timestamp> <title> <room>
+        """
+        columns = ['talk', 'start_timestamp', 'title', 'room']
+        query = 'SELECT id, start_timestamp, title, room, count(upt.userid) AS people ' + \
+                'FROM talk JOIN user_present_at_talk upt ON (talk.id = upt.talkid) ' + \
+                "WHERE start_timestamp BETWEEN %s AND %s AND status = 'accepted' " + \
+                'GROUP BY id, start_timestamp, title, room ' + \
+                'ORDER BY people DESC ' + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
+        placeholders = [args['start_timestamp'], args['end_timestamp']]
+        placeholders += [args['limit']] if args['limit'] > 0 else []
+        auth_data = None
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def attended_talks(self, name, args):
+        """
+        attended_talks <login> <password>
+        Returned attributes: <talk> <start_timestamp> <title> <room>
+        """
+        columns = ['talk', 'start_timestamp', 'title', 'room']
+        query = 'SELECT talkid, start_timestamp, title, room ' + \
+                'FROM user_present_at_talk upt JOIN talk ON (upt.talkid = talk.id) ' + \
+                "WHERE status = 'accepted' AND upt.userid = %s"
+        placeholders = [args['login']]
+        auth_data = (args['login'], args['password'], 'participant')
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def abandoned_talks(self, name, args):
+        """
+        abandoned_talks <login> <password>  <limit>
+        Returned attributes: <talk> <start_timestamp> <title> <room> <number>
+        """
+        columns = ['talk', 'start_timestamp', 'title', 'room', 'number']
+        query = 'WITH absent_people AS (' + \
+                '(SELECT id AS talkid, ue.userid FROM user_registered_at_event ue ' + \
+                'JOIN talk ON (talk.eventid = ue.eventid) ' + \
+                "WHERE status = 'accepted') " + \
+                'EXCEPT (SELECT talkid, userid FROM user_present_at_talk)) ' + \
+                'SELECT id, start_timestamp, title, room, count(ap.userid) AS "number" ' + \
+                'FROM talk JOIN absent_people ap ON (ap.talkid = talk.id) ' + \
+                "WHERE status = 'accepted' " + \
+                'GROUP BY id, start_timestamp, title, room ' + \
+                'ORDER BY "number" DESC' + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
+        placeholders = [args['limit']] if args['limit'] > 0 else []
+        auth_data = (args['login'], args['password'], 'organiser')
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def recently_added_talks(self, name, args):
+        """
+        (N) recently_added_talks <limit>
+        Returned attributes: <talk> <speakerlogin> <start_timestamp> <title> <room>
+        """
+        columns = ['talk', 'speakerlogin', 'start_timestamp', 'title', 'room']
+        query = 'SELECT id, userid, start_timestamp, title, room ' + \
+                "FROM talk WHERE status = 'accepted' " + \
+                "ORDER BY registration_timestamp DESC " + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
+        placeholders = [args['limit']] if args['limit'] > 0 else []
+        auth_data = None
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def proposals(self, name, args):
+        """
+        (O) proposals <login> <password>
+        Returned attributes: <talk> <speakerlogin> <start_timestamp> <title>
+        """
+        columns = ['talk', 'speakerlogin', 'start_timestamp', 'title']
+        query = 'SELECT id, userid, start_timestamp, title FROM talk ' + \
+                "WHERE status = 'awaiting' "
+        placeholders = []
+        auth_data = (args['login'], args['password'], 'organiser')
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def friends_talks(self, name, args):
+        """
+        (U) friends_talks <login> <password> <start_timestamp> <end_timestamp> <limit>
+        Returned attributes: <talk> <speakerlogin> <start_timestamp> <title> <room>
+        """
+        columns = ['talk', 'speakerlogin', 'start_timestamp', 'title', 'room']
+        query = 'SELECT id, userid, start_timestamp, title, room ' + \
+                'FROM talk ' + \
+                "WHERE status = 'accepted' AND userid IN (" + \
+                '(SELECT userid1 FROM friend_of WHERE userid2 = %s) UNION ' + \
+                '(SELECT userid2 FROM friend_of WHERE userid1 = %s)) ' + \
+                'AND start_timestamp BETWEEN %s AND %s'
+        placeholders = [args['login'], args['login'],
+                        args['start_timestamp'], args['end_timestamp']]
+        auth_data = (args['login'], args['password'], 'participant')
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def friends_events(self, name, args):
+        """
+        (U) friends_events <login> <password> <eventname>
+        Returned attributes: <login> <eventname> <friendlogin>
+        """
+        columns = ['login', 'eventname', 'friendlogin']
+        query = '(SELECT userid1, ue.eventid, userid2 FROM friend_of ' + \
+                'JOIN user_registered_at_event ue ON (ue.userid = userid1) ' + \
+                'JOIN user_registered_at_event ue2 ON (ue2.userid = userid2) ' + \
+                'WHERE ue2.eventid = ue.eventid AND userid1 = %s) UNION ' + \
+                '(SELECT userid1, ue.eventid, userid2 FROM friend_of ' + \
+                'JOIN user_registered_at_event ue ON (ue.userid = userid1) ' + \
+                'JOIN user_registered_at_event ue2 ON (ue2.userid = userid2) ' + \
+                'WHERE ue2.eventid = ue.eventid AND userid2 = %s)'
+        placeholders = [args['login'], args['login']]
+        auth_data = (args['login'], args['password'], 'participant')
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def recommended_talks(self, name, args):
+        """
+        (U) recommended_talks <login> <password> <start_timestamp> <end_timestamp> <limit>
+        Returned attributes: <talk> <speakerlogin> <start_timestamp> <title> <room> <score>
+        """
+        columns = ['talk', 'speakerlogin', 'start_timestamp', 'title', 'room', 'score']
+        query = 'SELECT id, talk.userid, start_timestamp, title, room, ' + \
+                '(avg(rating) * count(up.userid))::int AS "score" ' + \
+                'FROM talk JOIN user_talk_rating ur ON (ur.talkid = talk.id) ' + \
+                'JOIN user_present_at_talk up ON (up.talkid = talk.id) ' + \
+                "WHERE status = 'accepted' AND start_timestamp BETWEEN %s AND %s " + \
+                'GROUP BY id, talk.userid, start_timestamp, title, room ' + \
+                'ORDER BY score DESC ' + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
+        placeholders = [args['start_timestamp'], args['end_timestamp']]
+        placeholders += [args['limit']] if args['limit'] > 0 else []
+        auth_data = (args['login'], args['password'], 'participant')
+        return name, columns, query, placeholders, False, auth_data
 
 
     def template(self, name, args):
