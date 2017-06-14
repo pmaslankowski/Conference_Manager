@@ -1,31 +1,9 @@
--- Model fizyczny bazy danych wspomagającej organizację konferencji
+-- Tworzenie bazy danych dla konferencji
 -- naukowej
 -- Autor: Piotr Maślankowski
 -- Maj 2017
 
 
---delete old database
-DROP DATABASE IF EXISTS conference_database;
-DROP OWNED BY app_api;
-DROP ROLE IF EXISTS app_api;
-
-DROP TABLE IF EXISTS user_registered_at_event CASCADE;
-DROP TABLE IF EXISTS user_talk_rating CASCADE;
-DROP TABLE IF EXISTS user_present_at_talk CASCADE;
-DROP TABLE IF EXISTS invitation_friend_of CASCADE;
-DROP TABLE IF EXISTS friend_of CASCADE;
-DROP TABLE IF EXISTS conf_user CASCADE;
-DROP TABLE IF EXISTS talk CASCADE;
-DROP TABLE IF EXISTS event CASCADE;
-DROP DOMAIN IF EXISTS TalkStatus;
-DROP DOMAIN IF EXISTS TalkRating;
-DROP DOMAIN IF EXISTS UserType;
-
-
-CREATE DATABASE conference_database;
-\connect conference_database;
-
-CREATE ROLE app_api WITH LOGIN PASSWORD '123456';
 -- create  domains:
 CREATE DOMAIN TalkStatus AS text
 	CHECK(VALUE IN ('accepted', 'rejected', 'awaiting')) NOT NULL;
@@ -254,6 +232,7 @@ END;
 $X$ LANGUAGE plpgsql
 SECURITY DEFINER;
 
+DROP FUNCTION rejected_talks(username VARCHAR(50), pass VARCHAR(50));
 CREATE OR REPLACE FUNCTION rejected_talks(username VARCHAR(50), pass VARCHAR(50))
 RETURNS TABLE(talk text, speakerlogin varchar(50), start_timestamp_res timestamp, title_res text)
 AS $X$
@@ -271,17 +250,5 @@ BEGIN
 END;
 $X$ LANGUAGE plpgsql;
 
-
-REVOKE ALL ON FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
-	FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION check_user(username VARCHAR(50), pass VARCHAR(50))
-	TO app_api;
-GRANT EXECUTE ON FUNCTION create_user(username VARCHAR(50), pass VARCHAR(50))
-	TO app_api;
-GRANT SELECT, INSERT, UPDATE, REFERENCES
-	ON TABLE event, talk, user_registered_at_event, user_talk_rating,
-	         user_present_at_talk, invitation_friend_of, friend_of
-	TO app_api;
-GRANT DELETE ON TABLE invitation_friend_of TO app_api;
 
 INSERT INTO event VALUES('', '01-01-0001', '01-01-9999');

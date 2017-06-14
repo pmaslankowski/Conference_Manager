@@ -18,6 +18,7 @@ class Database(object):
     """
     _conn = None
     _cursor = None
+    opened = False
 
 
     def __init__(self, logging=False):
@@ -32,24 +33,30 @@ class Database(object):
                                           password=password,
                                           host='localhost')
             self._cursor = self._conn.cursor()
+            print(r'{"status": "OK"}')
+            self.opened = True
 
             if self._logging:
                 print('Connection to database established.')
 
         except (Exception, psycopg2.DatabaseError) as error:
-            print(error)
+            print(r'{"status": "ERROR", "desc": "Wrong database login data"}')
 
 
     def close(self):
         """Close connection to database"""
+        self.opened = False
         if self._conn is not None:
             self._conn.close()
             if self._logging:
                 print('Connection closed.')
 
 
-    def check_tables(self):
-        pass
+    def create_tables(self):
+        try:
+            self._cursor.execute(open('create_database.sql', 'r').read())
+        except:
+            self._conn.rollback()
 
 
     def check_authentication(self, login, password, expected_level):
@@ -60,19 +67,34 @@ class Database(object):
 
 
     def execute(self, query):
-        if query.auth_data is not None and not self.check_authentication(*query.auth_data):
-            query.status = 'ERROR'
-            if self._logging:
-                print('Failed authentication')
-        else:
-            self._cursor.execute(query.sql, query.placeholders)
-            if(not(query.modifying)):
-                query.raw_result = self._cursor.fetchall()
-            self._conn.commit()
-            query.executed = True
-            query.status = 'OK'
+        try:
+            if query.name == 'organizer':
+                if query.auth_data != 'd8578edf8458ce06fbc5bb76a58c5ca4':
+                    query.status = 'ERROR'
+                    if self._logging:
+                        print('Failed authentication - wrong secret.')
+                else:
+                    query.auth_data = None
 
-            if self._logging:
-                    print('Query was sucessfully executed')
-                    if(not(query.modifying)):
-                        print('(returning {} row(s))'.format(len(query.raw_result)))
+            if query.auth_data is not None and not self.check_authentication(*query.auth_data):
+                query.status = 'ERROR'
+                if self._logging:
+                    print('Failed authentication')
+            else:
+                self._cursor.execute(query.sql, query.placeholders)
+                if(not(query.modifying)):
+                    query.raw_result = self._cursor.fetchall()
+                self._conn.commit()
+                query.executed = True
+                query.status = 'OK'
+
+                if self._logging:
+                        print('Query was sucessfully executed')
+                        if(not(query.modifying)):
+                            print('(returning {} row(s))'.format(len(query.raw_result)))
+        except (psycopg2.InternalError, psycopg2.IntegrityError,
+                psycopg2.DataError, psycopg2.ProgrammingError) as err:
+            query.status = 'ERROR'
+            query.desc = str(err).replace('\n', ' ').replace('"', "'")
+            self._conn.rollback()
+                #print('ERROR:'+query.name)

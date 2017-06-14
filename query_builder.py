@@ -22,13 +22,24 @@ class QueryBuilder:
 
 
     # query builders:
+    def organizer(self, name, args):
+        """
+        (*) organizer <secret> <newlogin> <newpassword>
+        """
+        columns = []
+        query = 'SELECT create_organiser(%s, %s)'
+        placeholders = [args['newlogin'], args['newpassword']]
+        auth_data = args['secret']
+        return name, columns, query, placeholders, True, auth_data
+
+
     # queries modifying database
     def event(self, name, args):
         """
         (*O) event <login> <password> <eventname> <start_timestamp> <end_timestamp>
         """
         columns = []
-        query = 'INSERT INTO event(name, start_date, finish_date) VALUES(%s, %s, %s)'
+        query = 'INSERT INTO event(id, start_date, finish_date) VALUES(%s, %s, %s)'
         placeholders = [args['eventname'], args['start_timestamp'], args['end_timestamp']]
         auth_data = (args['login'], args['password'], 'organiser')
         return name, columns, query, placeholders, True, auth_data
@@ -51,17 +62,21 @@ class QueryBuilder:
                   <room> <initial_evaluation> <eventname>
         """
         columns = []
-        query = 'INSERT INTO talk(id, userid, eventid, status, title, room, start_timestamp)' + \
-                'VALUES(%s, %s, %s, %s, %s, %s, %s)' + \
+        query = 'BEGIN; INSERT INTO talk(id, userid, eventid, status, title, room, start_timestamp)' + \
+                'VALUES(%s, %s, %s, %s, %s, %s, %s) ' + \
                 'ON CONFLICT (id) DO UPDATE ' + \
                 'SET userid = excluded.userid, title = excluded.title,' + \
-                "start_timestamp = excluded.start_timestamp, status = 'accepted';" + \
+                "start_timestamp = excluded.start_timestamp, status = 'accepted', " + \
+                'room = excluded.room, eventid = excluded.eventid; ' + \
                 'INSERT INTO user_talk_rating(userid, talkid, rating)' + \
-                'VALUES(%s, %s, %s)'
+                'VALUES(%s, %s, %s) ON CONFLICT (userid, talkid) DO UPDATE SET rating = excluded.rating; ' + \
+                'INSERT INTO user_present_at_talk(userid, talkid) VALUES(%s, %s); COMMIT;'
         placeholders = [args['talk'], args['speakerlogin'], args['eventname'],
                         'accepted', args['title'], args['room'], args['start_timestamp'],
                         # second query:
-                        args['login'], args['talk'], args['initial_evaluation']]
+                        args['login'], args['talk'], args['initial_evaluation'],
+                        # third query:
+                        args['login'], args['talk']]
         auth_data = (args['login'], args['password'], 'organiser')
         return name, columns, query, placeholders, True, auth_data
 
@@ -115,12 +130,12 @@ class QueryBuilder:
 
     def proposal(self, name, args):
         """
-        (U) proposal  <login> <password> <talk> <title> <start_timestamp> <eventname>
+        (U) proposal  <login> <password> <talk> <title> <start_timestamp>
         """
         columns = []
-        query = 'INSERT INTO talk(id, userid, eventid, title, start_timestamp)' + \
+        query = 'INSERT INTO talk(id, eventid, userid, title, start_timestamp)' + \
                 'VALUES(%s, %s, %s, %s, %s)'
-        placeholders = [args['talk'], args['login'], args['eventname'],
+        placeholders = [args['talk'], '', args['login'],
                         args['title'], args['start_timestamp']]
         auth_data = (args['login'], args['password'], 'participant')
         return name, columns, query, placeholders, True, auth_data
@@ -144,7 +159,7 @@ class QueryBuilder:
         Return attributes: <login> <talk> <start_timestamp> <title> <room>
         """
         columns = ['login', 'talk', 'start_timestamp', 'title', 'room']
-        query = 'SELECT ue.userid, talk.id, start_timestamp, title, room ' + \
+        query = 'SELECT talk.userid, talk.id, start_timestamp, title, room ' + \
                 'FROM user_registered_at_event ue ' + \
                 'JOIN talk ON (ue.eventid = talk.eventid) ' + \
                 "WHERE ue.userid = %s AND status = 'accepted' " + \
@@ -188,7 +203,6 @@ class QueryBuilder:
                 'GROUP BY talkid, start_timestamp, title, room ' + \
                 'ORDER BY avgrate DESC ' + \
                 ('LIMIT %s' if args['limit'] > 0 else '')
-        print(query)
         placeholders = [args['start_timestamp'], args['end_timestamp']]
         placeholders += [args['limit']] if args['limit'] > 0 else []
         auth_data = None
@@ -271,7 +285,7 @@ class QueryBuilder:
         """
         columns = ['talk', 'speakerlogin', 'start_timestamp', 'title']
         query = 'SELECT id, userid, start_timestamp, title FROM talk ' + \
-                "WHERE status = 'awaiting' "
+                "WHERE status = 'awaiting' ORDER BY talk"
         placeholders = []
         auth_data = (args['login'], args['password'], 'organiser')
         return name, columns, query, placeholders, False, auth_data
@@ -288,9 +302,12 @@ class QueryBuilder:
                 "WHERE status = 'accepted' AND userid IN (" + \
                 '(SELECT userid1 FROM friend_of WHERE userid2 = %s) UNION ' + \
                 '(SELECT userid2 FROM friend_of WHERE userid1 = %s)) ' + \
-                'AND start_timestamp BETWEEN %s AND %s'
+                'AND start_timestamp BETWEEN %s AND %s ' + \
+                'ORDER BY start_timestamp ' + \
+                ('LIMIT %s' if args['limit'] > 0 else '')
         placeholders = [args['login'], args['login'],
                         args['start_timestamp'], args['end_timestamp']]
+        placeholders += [args['limit']] if args['limit'] > 0 else []
         auth_data = (args['login'], args['password'], 'participant')
         return name, columns, query, placeholders, False, auth_data
 
@@ -301,15 +318,13 @@ class QueryBuilder:
         Returned attributes: <login> <eventname> <friendlogin>
         """
         columns = ['login', 'eventname', 'friendlogin']
-        query = '(SELECT userid1, ue.eventid, userid2 FROM friend_of ' + \
+        query = '(SELECT userid1, eventid, userid2 FROM friend_of ' + \
+                'JOIN user_registered_at_event ue ON (ue.userid = userid2) ' + \
+                'WHERE userid1 = %s AND eventid = %s ) UNION ' + \
+                '(SELECT userid2, eventid, userid1 FROM friend_of ' + \
                 'JOIN user_registered_at_event ue ON (ue.userid = userid1) ' + \
-                'JOIN user_registered_at_event ue2 ON (ue2.userid = userid2) ' + \
-                'WHERE ue2.eventid = ue.eventid AND userid1 = %s) UNION ' + \
-                '(SELECT userid1, ue.eventid, userid2 FROM friend_of ' + \
-                'JOIN user_registered_at_event ue ON (ue.userid = userid1) ' + \
-                'JOIN user_registered_at_event ue2 ON (ue2.userid = userid2) ' + \
-                'WHERE ue2.eventid = ue.eventid AND userid2 = %s)'
-        placeholders = [args['login'], args['login']]
+                'WHERE userid2 = %s AND eventid = %s)'
+        placeholders = [args['login'], args['eventname'], args['login'], args['eventname']]
         auth_data = (args['login'], args['password'], 'participant')
         return name, columns, query, placeholders, False, auth_data
 
@@ -330,6 +345,18 @@ class QueryBuilder:
                 ('LIMIT %s' if args['limit'] > 0 else '')
         placeholders = [args['start_timestamp'], args['end_timestamp']]
         placeholders += [args['limit']] if args['limit'] > 0 else []
+        auth_data = (args['login'], args['password'], 'participant')
+        return name, columns, query, placeholders, False, auth_data
+
+
+    def rejected_talks(self, name, args):
+        """
+        (U/O) rejected_talks <login> <password>
+        Returned attributes: <talk> <speakerlogin> <start_timestamp> <title>
+        """
+        columns = ['talk', 'speakerlogin', 'start_timestamp', 'title']
+        query = 'SELECT * FROM rejected_talks(%s, %s)'
+        placeholders = [args['login'], args['password']]
         auth_data = (args['login'], args['password'], 'participant')
         return name, columns, query, placeholders, False, auth_data
 

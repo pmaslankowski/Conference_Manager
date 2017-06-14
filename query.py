@@ -36,6 +36,7 @@ class Query(object):
         self.placeholders = placeholders
         self.modifying = modifying
         self.auth_data = auth_data
+        self.desc = ''
 
 
     def __str__(self):
@@ -48,16 +49,16 @@ class Query(object):
            Result is stored in self.result"""
 
         def parse_one_record(record):
-            return {col : val for col, val in zip(self.columns, record)}
+            return {col : str(val) for col, val in zip(self.columns, record)}
 
         def auxilary_date_serializer(obj):
             if isinstance(obj, (datetime, date)):
-                return obj.isoformat()
+                return obj.isoformat(' ')
             raise TypeError ("Type {} is not serializable".format(type(obj)))
 
 
         if self.status == 'ERROR':
-            self.result = '{"status": "ERROR"}'
+            self.result = '{"status": "ERROR", "desc": "' + str(self.desc) + '"}'
         elif self.modifying:
             self.result = '{"status": "OK"}'
         else:
